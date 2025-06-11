@@ -1,0 +1,280 @@
+{% extends "layout.html" %}
+
+{% block extra_css %}
+<style>
+    .landing-hero {
+        padding: 4rem 0;
+        background: linear-gradient(135deg, rgba(44, 62, 80, 0.95) 0%, rgba(52, 152, 219, 0.9) 100%), url("https://source.unsplash.com/random/1600x900/?abstract,technology,prediction") no-repeat center center;
+        background-size: cover;
+        color: var(--kp-light-text);
+        text-align: center;
+    }
+    .landing-hero .display-3 {
+        font-family: 'Roboto Slab', serif;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    }
+    .landing-hero .lead {
+        font-size: 1.3rem;
+        margin-bottom: 2rem;
+        opacity: 0.9;
+    }
+    .landing-hero .btn {
+        font-size: 1.1rem;
+        padding: 0.8rem 2rem;
+        font-weight: 500;
+    }
+
+    /* --- New Pricing Section Styles --- */
+    .pricing-section {
+        padding: 4rem 0;
+        background-color: #f8f9fa; /* Light grey background */
+    }
+    .section-title {
+        font-family: 'Roboto Slab', serif;
+        font-weight: 700;
+        color: var(--kp-primary-dark);
+        margin-bottom: 3rem;
+        text-align: center;
+    }
+    .pricing-card {
+        border-radius: 15px;
+        border: none;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+        overflow: hidden;
+        text-align: center;
+    }
+    .pricing-card:hover {
+        transform: translateY(-10px);
+        box-shadow: 0 15px 40px rgba(0, 0, 0, 0.15);
+    }
+    .pricing-card .card-header {
+        padding: 1.5rem;
+        font-size: 1.2rem;
+        font-weight: 600;
+        border-bottom: none;
+    }
+    .pricing-card .card-body {
+        padding: 2rem 1.5rem;
+    }
+    .pricing-card .price {
+        font-size: 3rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+    }
+    .pricing-card .price .currency {
+        font-size: 1.5rem;
+        vertical-align: super;
+        margin-right: 5px;
+    }
+    .pricing-card .duration {
+        font-size: 1.5rem;
+        font-weight: 500;
+        color: #6c757d;
+        margin-bottom: 1.5rem;
+    }
+    .pricing-card .features {
+        list-style: none;
+        padding: 0;
+        margin-bottom: 2rem;
+    }
+    .pricing-card .features li {
+        margin-bottom: 0.75rem;
+        color: #495057;
+    }
+    .pricing-card .features li i {
+        color: var(--kp-secondary);
+        margin-right: 0.5rem;
+    }
+
+    /* Card Color Schemes */
+    .pricing-card.bronze .card-header { background: linear-gradient(135deg, #cd7f32, #a05d21); color: white; }
+    .pricing-card.bronze .price { color: #cd7f32; }
+    .pricing-card.silver .card-header { background: linear-gradient(135deg, #c0c0c0, #a9a9a9); color: white; }
+    .pricing-card.silver .price { color: #a9a9a9; }
+    .pricing-card.gold .card-header { background: linear-gradient(135deg, #ffd700, #d4af37); color: var(--kp-dark-text); }
+    .pricing-card.gold .price { color: #d4af37; }
+
+
+    /* --- Enhanced Disclaimer Section --- */
+    .disclaimer-section {
+        background-color: #fff8f8; /* Very light red background */
+        padding: 3rem 1.5rem;
+        margin-top: 4rem;
+        border-radius: var(--kp-border-radius);
+        border: 1px solid #f5c2c7;
+        box-shadow: var(--kp-box-shadow);
+    }
+    .disclaimer-section h2 {
+        font-family: 'Roboto Slab', serif;
+        color: #b71c1c; /* Darker red */
+        text-align: center;
+        margin-bottom: 2rem;
+        font-weight: 700;
+        border-bottom: 2px solid #ef5350; /* Lighter red */
+        padding-bottom: 0.5rem;
+        display: inline-block;
+    }
+    .disclaimer-section h3 {
+        color: #c62828; /* Medium red */
+        font-size: 1.3rem;
+        margin-top: 1.5rem;
+        margin-bottom: 0.75rem;
+        font-weight: 600;
+    }
+    .disclaimer-section p, .disclaimer-section li {
+        color: #555;
+        font-size: 0.95rem;
+        line-height: 1.7;
+        margin-bottom: 0.75rem;
+    }
+    .disclaimer-section ul {
+        padding-left: 1.5rem;
+    }
+    .disclaimer-section strong {
+        color: #333;
+    }
+    .disclaimer-section .text-center-h2-container {
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .disclaimer-section .important-notice {
+        background-color: #fff;
+        border-left: 5px solid #c62828;
+        padding: 1rem 1.5rem;
+        margin-top: 1rem;
+        border-radius: 0.25rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="landing-hero">
+    <div class="container">
+        <i class="fas fa-chart-line fa-4x mb-4"></i>
+        <h1 class="display-3">Unlock the Power of Success with KingPredict</h1>
+        <p class="lead col-md-10 mx-auto">
+            Leveraging timely insights of Aviator. 
+            Elevate your strategy, understand the odds, and play smarter.
+        </p>
+        
+        {% if current_user.is_authenticated %}
+            <p class="mb-4 fs-5">Welcome back, {{ current_user.username }}!</p>
+            <a class="btn btn-kp-secondary btn-lg px-5 py-3 shadow-sm" href="{{ url_for('dashboard') }}" role="button">
+                <i class="fas fa-tachometer-alt me-2"></i>Go to Your Dashboard
+            </a>
+        {% else %}
+            <a class="btn btn-kp-primary btn-lg px-4 py-3 me-md-3 mb-3 mb-md-0 shadow-sm" href="{{ url_for('login') }}" role="button">
+                <i class="fas fa-sign-in-alt me-2"></i>Member Login
+            </a>
+            <a class="btn btn-kp-secondary btn-lg px-4 py-3 shadow-sm" href="{{ url_for('register') }}" role="button">
+                <i class="fas fa-user-plus me-2"></i>Register for Trial
+            </a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- #################################################################### -->
+<!-- # START: NEW PRICING SECTION                                       # -->
+<!-- #################################################################### -->
+<section class="pricing-section">
+    <div class="container">
+        <h2 class="section-title">Choose Your Plan</h2>
+        <div class="row">
+            <!-- 3 Days Plan -->
+            <div class="col-lg-4 mb-4">
+                <div class="card pricing-card bronze h-100">
+                    <div class="card-header">Starter</div>
+                    <div class="card-body">
+                        <div class="price"><span class="currency">GHS</span>150</div>
+                        <h3 class="duration">3 Days Access</h3>
+                        <ul class="features">
+                            <li><i class="fas fa-check-circle"></i> Full access to all predictions</li>
+                            <li><i class="fas fa-check-circle"></i> Hourly & Daily Tiers</li>
+                            <li><i class="fas fa-check-circle"></i> HML Likelihoods</li>
+                        </ul>
+                        <a href="{{ url_for('register') }}" class="btn btn-lg btn-kp-primary w-100">Get Started</a>
+                    </div>
+                </div>
+            </div>
+            <!-- 5 Days Plan -->
+            <div class="col-lg-4 mb-4">
+                <div class="card pricing-card silver h-100">
+                    <div class="card-header">Pro</div>
+                    <div class="card-body">
+                        <div class="price"><span class="currency">GHS</span>200</div>
+                        <h3 class="duration">5 Days Access</h3>
+                        <ul class="features">
+                            <li><i class="fas fa-check-circle"></i> Full access to all predictions</li>
+                            <li><i class="fas fa-check-circle"></i> Hourly & Daily Tiers</li>
+                            <li><i class="fas fa-check-circle"></i> HML Likelihoods</li>
+                        </ul>
+                        <a href="{{ url_for('register') }}" class="btn btn-lg btn-kp-primary w-100">Get Started</a>
+                    </div>
+                </div>
+            </div>
+            <!-- 7 Days Plan -->
+            <div class="col-lg-4 mb-4">
+                <div class="card pricing-card gold h-100">
+                    <div class="card-header">Elite</div>
+                    <div class="card-body">
+                        <div class="price"><span class="currency">GHS</span>250</div>
+                        <h3 class="duration">7 Days Access</h3>
+                        <ul class="features">
+                            <li><i class="fas fa-check-circle"></i> Full access to all predictions</li>
+                            <li><i class="fas fa-check-circle"></i> Hourly & Daily Tiers</li>
+                            <li><i class="fas fa-check-circle"></i> HML Likelihoods</li>
+                        </ul>
+                        <a href="{{ url_for('register') }}" class="btn btn-lg btn-kp-primary w-100">Get Started</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+<!-- #################################################################### -->
+<!-- # END: NEW PRICING SECTION                                         # -->
+<!-- #################################################################### -->
+
+
+<div class="container">
+    <!-- #################################################################### -->
+    <!-- # START: ENHANCED DISCLAIMER SECTION                               # -->
+    <!-- #################################################################### -->
+    <section class="disclaimer-section">
+        <div class="text-center-h2-container">
+            <h2><i class="fas fa-exclamation-triangle me-2"></i>Official Disclaimer & Risk Notice</h2>
+        </div>
+
+        <h3>Purpose of Service:</h3>
+        <p>This website and its services are designed as **informational tools** for entertainment purposes. The predictions, analyses, and insights provided are based on historical data patterns and are **not financial or investment advice**. They are intended to supplement your own strategy, not replace it.</p>
+
+        <h3>No Guarantee of Success:</h3>
+        <p>We do not and cannot guarantee the accuracy, reliability, or profitability of our predictions. The game of Aviator is inherently random and designed with a house edge. **Losses are a possible and expected part of gameplay.** By using our service, you acknowledge that you may experience both wins and losses.</p>
+        
+        <h3>Understanding Prediction Tiers & Risk:</h3>
+        <ul>
+            <li>The <strong>Hourly Packages</strong> (10x+) represent a moderate-risk strategy designed for more frequent, smaller targets.</li>
+            <li>The <strong>Daily Packages</strong> (100x, 500x, 1000x+) are classified as **HIGH-RISK to EXTREME-RISK**. These predictions target rare events and carry a significant potential for financial loss. They are not suitable for all users.</li>
+        </ul>
+
+        <h3>Subscription and Trial Policy:</h3>
+        <p>A **48-hour free trial** is offered to new users to evaluate our system. This period is your opportunity to assess if our service aligns with your risk tolerance and gameplay style. After the trial, access requires a paid subscription.</p>
+        
+        <div class="important-notice">
+            <h3 style="color: #c62828;">Non-Refundable Payments</h3>
+            <p><strong>Please be advised that all subscription payments are final and strictly non-refundable under any circumstances.</strong> By making a payment, you confirm that you have completed the trial period and accept these terms.</p>
+        </div>
+
+        <h3>Limitation of Liability:</h3>
+        <p>Your use of this website is voluntary and undertaken at your own risk. KingPredict, its owners, and its affiliates shall not be held liable for any direct, indirect, incidental, or consequential losses resulting from the use of our services or reliance on any information provided.</p>
+
+        <p class="mt-4 text-center"><strong>Please play responsibly and never risk more than you can afford to lose.</strong></p>
+    </section>
+    <!-- #################################################################### -->
+    <!-- # END: ENHANCED DISCLAIMER SECTION                                 # -->
+    <!-- #################################################################### -->
+</div>
+{% endblock %}

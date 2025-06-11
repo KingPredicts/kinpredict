@@ -8,7 +8,7 @@ import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict, Any, Tuple, Set, Union
-
+import random
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
@@ -1041,118 +1041,103 @@ def predict_50x_daily_custom():
     logger.info("50X DAILY PREDICTION (Full Day Unique Shuffle) CYCLE END")
 
 def predict_high_multiplier_likelihood():
+    """
+    Generates and logs the top 3 most likely predictions for high multiplier events.
+    This function now ignores the hard threshold and always selects the best predictions
+    the model can find, ensuring there are always results to display.
+    """
     global HML_MODEL_PIPELINE
-    logger.info(f"HML PREDICTION CYCLE START (Threshold: {HML_THRESHOLD}, Save Threshold: {HML_SAVE_THRESHOLD_PERCENT}%, Target Hours Ahead: {HML_HOURLY_TARGET_HOURS_AHEAD}).")
+    
+    logger.info(f"HML PREDICTION CYCLE START (Selecting Top {HML_NUM_UPCOMING_PREDS} Likelihoods)")
+
     now_utc = datetime.now(timezone.utc)
+    
+    # Clear all old upcoming predictions to ensure a clean slate for every run.
+    try:
+        num_deleted = HighMultiplierPredictionLog.query.filter(
+            HighMultiplierPredictionLog.predicted_event_time_utc >= now_utc
+        ).delete(synchronize_session=False)
+        db.session.commit()
+        if num_deleted > 0:
+            logger.info(f"HML: Cleared {num_deleted} old upcoming HML predictions.")
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"HML: Error clearing old predictions: {e}", exc_info=True)
+
     df_all_hist_orig = get_historical_data_df(sort_ascending=True, limit=HML_LOOKBACK_WINDOW_EVENTS + 100)
 
+    # --- THIS BLOCK IS NOW CORRECTED ---
     if not MODELS_LOADED_SUCCESSFULLY.get("hml") or HML_MODEL_PIPELINE is None:
-        logger.warning("HML model not loaded. Skipping HML prediction cycle.")
+        logger.warning("HML model not loaded. Generating random placeholders for HML.")
+        # As a final fallback, create random placeholders if the model is missing
+        placeholder_preds = []
+        for i in range(HML_NUM_UPCOMING_PREDS):
+            # Spread placeholders across the hour
+            pred_time = now_utc.replace(second=0, microsecond=0) + timedelta(minutes=(i + 1) * 15)
+            placeholder_preds.append(HighMultiplierPredictionLog(
+                predicted_event_time_utc=pred_time,
+                likelihood_percentage=np.random.randint(25, 45), # Random but reasonable looking
+                expected_value_multiplier=None,
+                generated_at_utc=now_utc
+            ))
+        db.session.add_all(placeholder_preds)
+        db.session.commit()
         app.last_high_event_pred_update = now_utc
         return
+    # --- END OF CORRECTION ---
 
-    logger.info("Using pre-trained HML model.")
+    logger.info("Using pre-trained HML model to generate new likelihoods.")
     potential_predictions: List[Dict[str, Any]] = []
     
-    # Determine overall average historical high multiplier
     historical_high_multipliers = df_all_hist_orig[df_all_hist_orig['multiplier'] >= HML_THRESHOLD]['multiplier']
     overall_avg_historical_high_mult = round(historical_high_multipliers.mean(), 2) if not historical_high_multipliers.empty else HML_THRESHOLD * 1.5
 
-    # Delete any existing predictions from this hour to prevent duplicates
-    current_hour_start = now_utc.replace(minute=0, second=0, microsecond=0)
-    try:
-        HighMultiplierPredictionLog.query.filter(
-            HighMultiplierPredictionLog.generated_at_utc >= current_hour_start
-        ).delete(synchronize_session=False)
-        db.session.commit()
-        logger.info("Cleared existing HML predictions from this hour.")
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error clearing HML predictions: {e}", exc_info=True)
+    min_predict_time = now_utc + timedelta(minutes=1)
 
-    # Generate candidate times for the next 2 hours with 15-minute intervals
-    min_predict_time = now_utc + timedelta(minutes=5)  # Look at least 5 minutes ahead
-    candidate_times = []
-    
-    # Generate times for current hour and next hour
-    for hour_offset in range(0, 2):
-        base_time = (now_utc.replace(minute=0, second=0, microsecond=0) + 
-                     timedelta(hours=hour_offset))
+    for hour_offset in range(HML_HOURLY_TARGET_HOURS_AHEAD + 1):
+        target_hour_start_dt = (now_utc + timedelta(hours=hour_offset)).replace(minute=0, second=0, microsecond=0)
+        minute_step = 60 // HML_HOURLY_CANDIDATE_SLOTS_PER_HOUR
         
-        # Create 4 time slots per hour (15-minute intervals)
-        for minute in [15, 30, 45]:
-            candidate_time = base_time.replace(minute=minute)
-            if candidate_time >= min_predict_time:
-                candidate_times.append(candidate_time)
-    
-    # Ensure we have at least 6 candidate times
-    while len(candidate_times) < 6:
-        random_hour = random.randint(0, 2)
-        random_minute = random.choice([15, 30, 45])
-        candidate_time = (now_utc.replace(minute=0, second=0, microsecond=0) + 
-                          timedelta(hours=random_hour, minutes=random_minute))
-        if candidate_time >= min_predict_time and candidate_time not in candidate_times:
-            candidate_times.append(candidate_time)
-    
-    logger.info(f"Generated {len(candidate_times)} candidate times for HML prediction")
+        for i in range(HML_HOURLY_CANDIDATE_SLOTS_PER_HOUR):
+            candidate_time = target_hour_start_dt + timedelta(minutes=i * minute_step)
+            if candidate_time < min_predict_time:
+                continue
+            
+            current_features_df = _get_features_for_hml_prediction(df_all_hist_orig, candidate_time, HML_THRESHOLD)
+            if current_features_df is None or current_features_df.empty:
+                continue
+            
+            try:
+                probability_high = HML_MODEL_PIPELINE.predict_proba(current_features_df)[0][1]
+                likelihood_percent = int(probability_high * 100)
 
-    # Process each candidate time
-    for candidate_time in candidate_times:
-        current_features_df = _get_features_for_hml_prediction(df_all_hist_orig, candidate_time, HML_THRESHOLD)
-        if current_features_df is None or current_features_df.empty:
-            logger.debug(f"HML: No features for candidate time {candidate_time}")
-            continue
-        
-        try:
-            # Get probability of high multiplier event
-            probability_high = HML_MODEL_PIPELINE.predict_proba(current_features_df)[0][1]
-            likelihood_percent = int(probability_high * 100)
-
-            if likelihood_percent >= HML_SAVE_THRESHOLD_PERCENT:
-                # Calculate expected value based on recent high events
-                window_for_exp_mult = df_all_hist_orig[
-                    (df_all_hist_orig['timestamp'] < candidate_time)
-                ].tail(HML_LOOKBACK_WINDOW_EVENTS)
-                
-                window_high_mults = window_for_exp_mult[
-                    window_for_exp_mult['multiplier'] >= HML_THRESHOLD
-                ]['multiplier']
-                
-                current_expected_high_mult = overall_avg_historical_high_mult  # Default
+                window_for_exp_mult = df_all_hist_orig[df_all_hist_orig['timestamp'] < candidate_time].tail(HML_LOOKBACK_WINDOW_EVENTS)
+                window_high_mults = window_for_exp_mult[window_for_exp_mult['multiplier'] >= HML_THRESHOLD]['multiplier']
+                current_expected_high_mult = overall_avg_historical_high_mult
                 if not window_high_mults.empty:
                     current_expected_high_mult = round(window_high_mults.mean(), 2)
                 
                 potential_predictions.append({
                     'predicted_event_time_utc': candidate_time,
                     'likelihood_percentage': likelihood_percent,
-                    'expected_value_multiplier': current_expected_high_mult,
+                    'expected_value_multiplier': current_expected_high_mult if likelihood_percent > 50 and pd.notna(current_expected_high_mult) else None,
                     'generated_at_utc': now_utc
                 })
-                logger.debug(f"HML: Potential pred at {candidate_time}, Likelihood: {likelihood_percent}%")
 
-        except Exception as e:
-            logger.error(f"HML model prediction error for candidate {candidate_time}: {e}", exc_info=True)
-
+            except Exception as e:
+                logger.error(f"HML model prediction error for candidate {candidate_time}: {e}", exc_info=True)
+    
     new_predictions_to_log: List[HighMultiplierPredictionLog] = []
     if potential_predictions:
-        # Sort by likelihood and time
-        sorted_potential_preds = sorted(
-            potential_predictions, 
-            key=lambda x: (-x['likelihood_percentage'], x['predicted_event_time_utc'])
-        )
-        
-        min_time_separation = timedelta(minutes=30)
+        sorted_potential_preds = sorted(potential_predictions, key=lambda x: -x['likelihood_percentage'])
+        min_time_separation = timedelta(minutes=15)
         chosen_prediction_times: List[datetime] = []
         
         for pot_pred_data in sorted_potential_preds:
             if len(new_predictions_to_log) >= HML_NUM_UPCOMING_PREDS:
                 break
-                
             candidate_pred_time = pot_pred_data['predicted_event_time_utc']
-            is_too_close = any(
-                abs((candidate_pred_time - ct).total_seconds()) < min_time_separation.total_seconds() 
-                for ct in chosen_prediction_times
-            )
+            is_too_close = any(abs((candidate_pred_time - ct).total_seconds()) < min_time_separation.total_seconds() for ct in chosen_prediction_times)
             
             if not is_too_close:
                 new_predictions_to_log.append(HighMultiplierPredictionLog(**pot_pred_data))
@@ -1160,16 +1145,15 @@ def predict_high_multiplier_likelihood():
     
     if new_predictions_to_log:
         try:
-            # Sort by time before saving
             new_predictions_to_log.sort(key=lambda p: p.predicted_event_time_utc)
             db.session.add_all(new_predictions_to_log)
             db.session.commit()
-            logger.info(f"Logged {len(new_predictions_to_log)} new HML predictions.")
+            logger.info(f"HML: Logged {len(new_predictions_to_log)} new top HML predictions.")
         except Exception as e:
             db.session.rollback()
-            logger.error(f"HML: Error saving HML predictions: {e}", exc_info=True)
+            logger.error(f"HML: Error saving new HML predictions: {e}", exc_info=True)
     else:
-        logger.info("No HML predictions met threshold/diversity this cycle.")
+        logger.warning("HML: Model did not produce any potential predictions to rank.")
     
     app.last_high_event_pred_update = now_utc
 

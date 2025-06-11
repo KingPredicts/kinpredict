@@ -1,0 +1,212 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0" style="color: #1a237e;">Admin Dashboard</h2>
+        {# Link for admin to view the user dashboard #}
+        <a href="{{ url_for('dashboard', view_as_user='true') }}" class="btn btn-outline-info">
+            <i class="fas fa-tachometer-alt"></i> View User Predictions
+        </a>
+    </div>
+
+    <!-- User Management -->
+    <div class="card mb-4">
+        <div class="card-header"><i class="fas fa-users-cog"></i> User Management</div>
+        <div class="card-body">
+            <div class="row">
+                <!-- Register User Form -->
+                <div class="col-md-6 border-end pe-3">
+                    <h5><i class="fas fa-user-plus"></i> Register New User</h5>
+                    <form method="POST" action="{{ url_for('admin_register_user') }}">
+                        {{ registration_form.hidden_tag() }}
+                        <div class="mb-3">
+                            {{ registration_form.username.label(class="form-label") }}
+                            {{ registration_form.username(class="form-control" + (" is-invalid" if registration_form.username.errors else "")) }}
+                            {% for error in registration_form.username.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+                        </div>
+                        <div class="mb-3">
+                            {{ registration_form.password.label(class="form-label") }}
+                            {{ registration_form.password(class="form-control" + (" is-invalid" if registration_form.password.errors else "")) }}
+                             {% for error in registration_form.password.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+                        </div>
+                        <div class="mb-3">
+                            {{ registration_form.confirm_password.label(class="form-label") }}
+                            {{ registration_form.confirm_password(class="form-control" + (" is-invalid" if registration_form.confirm_password.errors else "")) }}
+                             {% for error in registration_form.confirm_password.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+                        </div>
+                        <div class="mb-3">
+                            {{ registration_form.expiry_time.label(class="form-label") }}
+                            {{ registration_form.expiry_time(class="form-control" + (" is-invalid" if registration_form.expiry_time.errors else ""), placeholder="e.g., 72:30") }}
+                             {% for error in registration_form.expiry_time.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+                        </div>
+                         <div class="mb-3">
+                            {{ registration_form.is_admin.label(class="form-label") }}
+                            {{ registration_form.is_admin(class="form-select" + (" is-invalid" if registration_form.is_admin.errors else "")) }}
+                             {% for error in registration_form.is_admin.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+                        </div>
+                        {{ registration_form.submit(class="btn btn-primary") }}
+                    </form>
+                </div>
+
+                <!-- Renew User Form -->
+                <div class="col-md-6 ps-3">
+                    <h5><i class="fas fa-user-clock"></i> Renew User Account</h5>
+                    <form method="POST" action="{{ url_for('admin_renew_user') }}">
+                        {{ renewal_form.hidden_tag() }}
+                        <div class="mb-3">
+                            {{ renewal_form.username.label(class="form-label") }}
+                            {{ renewal_form.username(class="form-control" + (" is-invalid" if renewal_form.username.errors else "")) }}
+                             {% for error in renewal_form.username.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+                        </div>
+                        <div class="mb-3">
+                            {{ renewal_form.new_expiry_time.label(class="form-label") }}
+                            {{ renewal_form.new_expiry_time(class="form-control" + (" is-invalid" if renewal_form.new_expiry_time.errors else ""), placeholder="e.g., 72:30") }}
+                             {% for error in renewal_form.new_expiry_time.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+                        </div>
+                        {{ renewal_form.submit(class="btn btn-success") }}
+                    </form>
+                </div>
+            </div>
+
+            <hr class="my-4">
+            <h5><i class="fas fa-list-ul"></i> Registered Users</h5>
+            <div class="table-responsive">
+                <table class="table table-striped table-hover table-sm">
+                    <thead>
+                        <tr>
+                            <th>Username</th>
+                            <th>Role</th>
+                            <th>Expiry Set (Duration)</th>
+                            <th>Countdown Started</th>
+                            <th>Expires On (UTC)</th>
+                            <th>Time Left</th>
+                            <th>Device Locked</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for user_item in users %} {# Changed loop variable to avoid conflict with user object from User model #}
+                        <tr>
+                            <td>{{ user_item.username }}</td>
+                            <td>{% if user_item.is_admin %}Admin <i class="fas fa-shield-alt text-success"></i>{% else %}User{% endif %}</td>
+                            <td>
+                                {% if user_item.expiry_duration_seconds is not none %}
+                                    {{ '%02d:%02d' % (user_item.expiry_duration_seconds // 3600, (user_item.expiry_duration_seconds % 3600) // 60) }}
+                                {% else %}
+                                    Indefinite
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if user_item.first_login_timestamp %}
+                                    <i class="fas fa-check-circle text-success"></i> {{ user_item.first_login_timestamp.strftime('%Y-%m-%d %H:%M') }}
+                                {% else %}
+                                    <i class="fas fa-times-circle text-danger"></i> No
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if user_item.actual_expiry_timestamp %}
+                                    {{ user_item.actual_expiry_timestamp.strftime('%Y-%m-%d %H:%M') }}
+                                    {% if user_item.actual_expiry_timestamp < datetime.now(timezone.utc) %}
+                                        <span class="badge bg-danger">Expired</span>
+                                    {% endif %}
+                                {% elif user_item.expiry_duration_seconds is none %}
+                                     N/A
+                                {% else %}
+                                    Pending first login
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if user_item.time_left_seconds is not none and user_item.time_left_seconds > 0 %}
+                                    {% set time_left_td = timedelta(seconds=user_item.time_left_seconds) %}
+                                    {{ '%02d:%02d:%02d' % (time_left_td.days * 24 + time_left_td.seconds // 3600, (time_left_td.seconds % 3600) // 60, time_left_td.seconds % 60) }}
+                                {% elif user_item.actual_expiry_timestamp and user_item.actual_expiry_timestamp < datetime.now(timezone.utc) %}
+                                    Expired
+                                {% elif user_item.expiry_duration_seconds is none %}
+                                     <i class="fas fa-infinity"></i>
+                                {% else %}
+                                    --:--:--
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if user_item.login_device_identifier %}
+                                    <i class="fas fa-lock text-success" title="{{ user_item.login_device_identifier[:10] }}..."></i> Yes
+                                {% else %}
+                                    <i class="fas fa-unlock text-muted"></i> No
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if user_item.id != current_user.id %} {# Prevent deleting self #}
+                                <form method="POST" action="{{ url_for('admin_delete_user', user_id=user_item.id) }}" class="d-inline" onsubmit="return confirm('Are you sure you want to delete user {{ user_item.username }}? This cannot be undone.');">
+                                    <button type="submit" class="btn btn-danger btn-sm"><i class="fas fa-trash-alt"></i></button>
+                                </form>
+                                {% else %}
+                                 <button class="btn btn-secondary btn-sm" disabled title="Cannot delete self"><i class="fas fa-trash-alt"></i></button>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Historical Data Management -->
+    <div class="card">
+        <div class="card-header"><i class="fas fa-history"></i> Historical Data Management</div>
+        <div class="card-body">
+            <h5><i class="fas fa-plus-circle"></i> Add New Historical Data Point</h5>
+            <form method="POST" action="{{ url_for('admin_add_historical_data') }}">
+                {{ historical_data_form.hidden_tag() }}
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-4">
+                        {{ historical_data_form.date.label(class="form-label") }}
+                        {{ historical_data_form.date(class="form-control" + (" is-invalid" if historical_data_form.date.errors else ""), placeholder="YYYY-MM-DD") }}
+                        {% for error in historical_data_form.date.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+                    </div>
+                    <div class="col-md-3">
+                        {{ historical_data_form.time.label(class="form-label") }}
+                        {{ historical_data_form.time(class="form-control" + (" is-invalid" if historical_data_form.time.errors else ""), placeholder="HH:MM:SS") }}
+                        {% for error in historical_data_form.time.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+                    </div>
+                    <div class="col-md-3">
+                        {{ historical_data_form.multiplier.label(class="form-label") }}
+                        {{ historical_data_form.multiplier(class="form-control" + (" is-invalid" if historical_data_form.multiplier.errors else ""), placeholder="e.g., 25.7") }}
+                        {% for error in historical_data_form.multiplier.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+                    </div>
+                    <div class="col-md-2 align-self-end">
+                        {{ historical_data_form.submit(class="btn btn-info w-100") }}
+                    </div>
+                </div>
+            </form>
+
+            <hr class="my-4">
+            <h5><i class="fas fa-clipboard-list"></i> Recent Historical Data (Last 20)</h5>
+            <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                <table class="table table-sm table-striped">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Time</th>
+                            <th>Multiplier</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for record in historical_records %}
+                    {% if record %} {# ADD THIS CHECK #}
+                    <tr>
+                        <td>{{ record.date }}</td>
+                        <td>{{ record.time }}</td>
+                        <td>{{ "%.2fx"|format(record.multiplier) }}</td>
+                    </tr>
+                    {% endif %} {# END CHECK #}
+                {% else %}
+                <tr><td colspan="3" class="text-center">No historical data found.</td></tr>
+                {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

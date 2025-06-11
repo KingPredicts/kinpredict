@@ -1,0 +1,495 @@
+{% extends "layout.html" %}
+
+{# =================================================================================== #}
+{# START Jinja2 Macro: render_prediction_table                                       #}
+{# This macro generates the HTML table structure for each prediction type.           #}
+{# =================================================================================== #}
+{% macro render_prediction_table(predictions, table_id_suffix, feedback_form_obj) %}
+<div class="table-responsive">
+    <table class="table table-striped table-hover table-sm prediction-table-custom">
+        <thead class="table-dark">
+            <tr>
+                <th>#</th>
+                <th>Time (UTC)</th>
+                <th>Interval</th>
+                <th>Min Mult.</th>
+                <th>Avg Mult.</th>
+                <th>Max Mult.</th>
+                <th>Confidence</th>
+                <th>Feedback</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if predictions %}
+                {% for pred in predictions %}
+                {% set pred_dt_aware = pred.predicted_datetime_utc.replace(tzinfo=timezone.utc) if pred.predicted_datetime_utc and pred.predicted_datetime_utc.tzinfo is none else pred.predicted_datetime_utc %}
+                {% set now_utc_aware = datetime.now(timezone.utc) %}
+                {% set is_past = pred_dt_aware and pred_dt_aware < now_utc_aware %}
+                {% set row_class = 'past-prediction' if is_past else '' %}
+                <tr class="{{ row_class }}">
+                    <td>{{ loop.index }}</td>
+                    <td>
+                        <i class="far fa-clock me-1 {{ 'text-muted' if is_past else 'text-primary' }}"></i>
+                        {{ pred.predicted_time }}
+                    </td>
+                    <td>
+                        {% if pred.interval %}
+                            {{ '%02d:%02d' % (pred.interval // 60, pred.interval % 60) }}
+                        {% else %}
+                            <span class="text-muted">--</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ "%.2fx"|format(pred.min_multiplier) }}</td>
+                    <td><strong>{{ "%.2fx"|format(pred.avg_multiplier) }}</strong></td>
+                    <td>{{ "%.2fx"|format(pred.max_multiplier) }}</td>
+                    <td>
+                        <span class="badge confidence-badge {{ 'confidence-high' if (pred.confidence * 100) >= 75 else 'confidence-medium' if (pred.confidence * 100) >= 50 else 'confidence-low' }}">
+                            {{ pred.confidence | format_confidence }}
+                        </span>
+                    </td>
+                    <td class="feedback-buttons">
+                        <form method="POST" action="{{ url_for('submit_feedback', prediction_type=table_id_suffix, prediction_id=pred.id) }}" class="d-inline">
+                            {{ feedback_form_obj.hidden_tag() if feedback_form_obj else '' }}
+                            <button type="submit" class="btn btn-sm {{ 'btn-success btn-kp-feedback-yes' if pred.user_verdict == 1 else 'btn-outline-secondary btn-kp-feedback' }}"
+                                    title="Mark as Correct" {{ 'disabled' if pred.user_verdict == 1 }}>
+                                <i class="fas fa-thumbs-up"></i> <span class="d-none d-md-inline">{{ 'Correct!' if pred.user_verdict == 1 else 'Hit?'}}</span>
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr>
+                    <td colspan="8" class="text-center text-muted py-4"><i>No predictions available for this category.</i></td>
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+{% endmacro %}
+{# =================================================================================== #}
+{# END Jinja2 Macro: render_prediction_table                                         #}
+{# =================================================================================== #}
+
+
+{% block extra_css %} {# SINGLE DEFINITION OF THIS BLOCK #}
+<style>
+    .page-header { margin-bottom: 2.5rem; }
+
+    /* Individual Win Stat Boxes */
+    .win-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; margin-bottom: 2.5rem; }
+    .win-stat-box { background-color: var(--kp-card-bg); border-radius: var(--kp-border-radius); padding: 1rem; text-align: center; box-shadow: var(--kp-box-shadow); border-left: 4px solid var(--kp-primary); transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out; }
+    .win-stat-box:hover { transform: translateY(-3px); box-shadow: 0 8px 16px rgba(0,0,0,0.1); }
+    .win-stat-box i.icon { font-size: 1.8rem; margin-bottom: 0.4rem; display: block; }
+    .win-stat-box .count { font-size: 2rem; font-weight: 700; color: var(--kp-primary-dark); display: block; line-height: 1.1; }
+    .win-stat-box .label { font-size: 0.75rem; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 0.1rem; }
+    .win-stat-box.hourly { border-left-color: #0d6efd; } .win-stat-box.hourly i.icon { color: #0d6efd; }
+    .win-stat-box.h-50x { border-left-color: #ff9800; } .win-stat-box.h-50x i.icon { color: #ff9800; }
+    .win-stat-box.d-50x { border-left-color: #ffc107; } .win-stat-box.d-50x i.icon { color: #ffc107; }
+    .win-stat-box.d-100x { border-left-color: #198754; } .win-stat-box.d-100x i.icon { color: #198754; }
+    .win-stat-box.d-500x { border-left-color: #fd7e14; } .win-stat-box.d-500x i.icon { color: #fd7e14; }
+    .win-stat-box.d-1000x { border-left-color: #dc3545; } .win-stat-box.d-1000x i.icon { color: #dc3545; }
+    .win-stat-box.hml { border-left-color: #00BCD4; } .win-stat-box.hml i.icon { color: #00BCD4; }
+    .win-stat-box.monthly { border-left-color: #6f42c1; } .win-stat-box.monthly i.icon { color: #6f42c1; }
+
+    /* HML Card */
+    .hml-card { border-left: 5px solid var(--kp-secondary); }
+    .hml-card .card-header { background-color: var(--kp-secondary); color: var(--kp-light-text); font-size: 1.15rem; }
+    .hml-luck-btn { background-color: var(--kp-primary); color: var(--kp-light-text); font-size: 1.5rem; padding: 1.2rem 0.8rem; border-radius: var(--kp-border-radius); font-weight: 600; line-height: 1.2; text-align: center; box-shadow: 0 2px 5px rgba(0,0,0,0.1); transition: all 0.2s ease; }
+    .hml-luck-btn:hover { background-color: #3ab929; transform: scale(1.03); }
+    .hml-prediction-item { background-color: #f8f9fa; border-radius: var(--kp-border-radius); padding: 1rem; border: 1px solid #e9ecef; text-align: center; display: flex; flex-direction: column; justify-content: space-between; min-height: 190px; }
+    .hml-prediction-item .expected-value { font-size: 2rem; font-weight: 700; color: var(--kp-accent); margin: 0.25rem 0; }
+   
+   /* Add this new CSS class */
+.hml-prediction-item .expected-value.bg-highlight {
+    background-color: #ffe5e5; /* Light pink background */
+    color: #b71c1c; /* A darker red for text to ensure contrast */
+    padding: 0.1rem 0.5rem;
+    border-radius: 5px;
+    display: inline-block; /* Makes the background fit the text */
+    margin-bottom: 0.5rem; /* Adds a little space below */
+}
+    .hml-prediction-item .likelihood { font-size: 1.3rem; font-weight: 600; color: var(--kp-primary-dark); margin-bottom: 0.25rem; }
+    .hml-prediction-item .event-time { font-size: 0.9rem; color: #f8360b; }
+    .hml-prediction-item .feedback-buttons { margin-top: 0.5rem; }
+    .hml-card .card-footer { background-color: transparent; border-top: 1px solid #e9ecef !important; font-size: 0.8rem; padding-top: 0.75rem; padding-bottom: 0.75rem; }
+
+    /* Accordion Styling */
+    .accordion-kp .accordion-item { margin-bottom: 1rem; border-radius: var(--kp-border-radius); overflow: hidden; box-shadow: var(--kp-box-shadow); border: 1px solid #dee2e6; }
+    .accordion-kp .accordion-button { font-weight: 600; font-size: 1.1rem; color: var(--kp-dark-text); background-color: #97cafd; }
+    .accordion-kp .accordion-button:not(.collapsed) { color: var(--kp-light-text); box-shadow: inset 0 -1px 0 rgba(0,0,0,.1); }
+    .accordion-kp .accordion-button:focus { box-shadow: 0 0 0 0.25rem rgba(var(--bs-primary-rgb),0.25); }
+    .accordion-button.bg-kp-hourly:not(.collapsed) { background-color: #198754 !important; color:white !important; border-color: #198754 !important;}
+    .accordion-button.bg-kp-50x-hourly:not(.collapsed) { background-color: #43c011d3 !important; color:white !important; border-color: #ff9800 !important;}
+    .accordion-button.bg-kp-50x-daily:not(.collapsed) { background-color: #ffc107 !important; color:var(--kp-dark-text) !important; border-color: #ffc107 !important;}
+    .accordion-button.bg-kp-100x:not(.collapsed) { background-color: #fd7e14 !important; color:white !important; border-color: #fd7e14 !important;}
+    .accordion-button.bg-kp-500x:not(.collapsed) { background-color: #d95360 !important; color:white !important; border-color: #d95360 !important;}
+    .accordion-button.bg-kp-1000x:not(.collapsed) { background-color: #dc3545 !important; color:white !important; border-color: #dc3545 !important;}
+    .accordion-button::after { filter: brightness(0) saturate(100%) invert(25%) sepia(12%) saturate(2730%) hue-rotate(175deg) brightness(94%) contrast(88%); }
+    .accordion-button:not(.collapsed)::after { filter: brightness(0) saturate(100%) invert(100%) sepia(0%) saturate(0%) hue-rotate(103deg) brightness(104%) contrast(101%); }
+    .accordion-button.bg-kp-50x-daily:not(.collapsed)::after { filter: brightness(0) saturate(100%) invert(14%) sepia(15%) saturate(910%) hue-rotate(170deg) brightness(93%) contrast(89%); }
+    
+    /* Prediction Table and Feedback Buttons */
+    .prediction-table-custom { font-size: 0.9rem; }
+    .prediction-table-custom th, .prediction-table-custom td { vertical-align: middle; }
+    .past-prediction td { color: #6c757d; font-style: italic; background-color: #f8f9fa; }
+    .btn-kp-feedback { padding: 0.25rem 0.5rem; font-size: 0.8rem; }
+    .btn-kp-feedback-yes { padding: 0.25rem 0.5rem; font-size: 0.8rem; }
+    .confidence-badge { padding: 0.4em 0.6em; font-size: 0.85em; }
+    .confidence-high { background-color: var(--kp-secondary) !important; color: white; }
+    .confidence-medium { background-color: var(--kp-accent) !important; color: var(--kp-dark-text); }
+    .confidence-low { background-color: #6c757d !important; color: white; }
+
+    /* Monthly Card Styling */
+    .monthly-card-wrapper .col-lg-6 { display: flex; align-items: stretch; }
+    .monthly-card { background: linear-gradient(135deg, var(--kp-primary-dark) 0%, var(--kp-secondary) 100%); color: var(--kp-light-text); border-radius: var(--kp-border-radius); padding: 1rem 1.25rem; margin-bottom: 1.5rem; box-shadow: 0 6px 12px rgba(0,0,0,0.12); text-align: center; width: 100%; display: flex; flex-direction: column; justify-content: space-around; }
+    .monthly-card h4 { font-family: 'Roboto Slab', serif; font-size: 1.15rem; margin-bottom: 0.4rem; opacity: 0.95; font-weight: 500;}
+    .monthly-card .countdown { font-size: 1.75rem; font-weight: 700; letter-spacing: 0.5px; margin: 0.2rem 0 0.6rem 0; color: var(--kp-accent); }
+    .monthly-card .target-info { font-size: 0.85rem; opacity: 0.9; margin-bottom: 0.4rem; }
+    .monthly-card .target-info strong { display: block; font-size: 0.9rem; }
+    .monthly-card .notes-section { font-size: 0.8rem; margin-top: 0.5rem; line-height: 1.3; }
+    .monthly-card .notes-section p { margin-bottom: 0.2rem; }
+    .monthly-card .notes-section em { opacity: 0.8; }
+    .monthly-card .badge { font-size: 0.75rem; padding: 0.35em 0.6em; }
+    .monthly-card .feedback-buttons { margin-top: 0.75rem; }
+    
+    /* System Legend Footer Box CSS */
+    .system-legend-footer { background-color: var(--kp-card-bg); border-radius: var(--kp-border-radius); padding: 1.5rem 2rem; margin-top: 3rem; margin-bottom: 1rem; box-shadow: var(--kp-box-shadow); border-top: 4px solid var(--kp-secondary); }
+    .system-legend-footer h4 { font-family: 'Roboto Slab', serif; color: var(--kp-primary-dark); font-size: 1.25rem; margin-bottom: 1rem; text-align: center; }
+    .system-legend-footer .legend-section { margin-bottom: 1.5rem; }
+    .system-legend-footer .legend-section-title { font-weight: 600; color: var(--kp-primary-dark); margin-bottom: 0.75rem; font-size: 1rem; }
+    .system-legend-footer .risk-levels-container,
+    .system-legend-footer .confidence-guide-container { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: center; }
+    .system-legend-footer .risk-level-badge { font-size: 0.8rem; padding: 0.4em 0.8em; border-radius: 0.25rem; font-weight: 500; }
+    .risk-low { background-color: #d1e7dd; color: #0f5132; border: 1px solid #badbcc;}
+    .risk-medium { background-color: #fff3cd; color: #664d03; border: 1px solid #ffecb5;}
+    .risk-high { background-color: #f8d7da; color: #58151c; border: 1px solid #f5c2c7;}
+    .risk-extreme { background-color: #dc3545; color: white; border: 1px solid #b02a37;}
+    .system-legend-footer .confidence-item { display: flex; align-items: center; font-size: 0.9rem; color: #555; padding: 0.3rem 0.6rem; background-color: #f8f9fa; border-radius: 0.25rem; border: 1px solid #e9ecef; }
+    .system-legend-footer .confidence-item .emoji-icon { margin-right: 0.5rem; font-size: 1.1em; min-width: 20px; text-align: center; font-style: normal; }
+    
+    /* Debug Box (can be removed later) */
+    .debug-box { border: 2px dashed red; padding: 15px; margin: 20px 0; background-color: #fff8dc; }
+    .debug-box h3 { color: red; }
+</style>
+{% endblock %}
+
+
+{% block content %}
+<div class="container mt-4 mb-5">
+    <div class="page-header text-center">
+        <h1 class="page-title">{{ title }}</h1>
+        {% if current_user.is_authenticated and current_user.status == 'active' %}
+            {% if current_user.time_left_seconds is not none and current_user.time_left_seconds > 0 %}
+                <p class="lead text-muted">Time Remaining: <strong id="expiryCountdown" class="text-success">{{ format_timedelta_to_hhmmss(timedelta(seconds=current_user.time_left_seconds)) }}</strong></p>
+            {% elif current_user.is_explicitly_expired %}
+                <p class="lead text-danger">Your subscription has expired.</p>
+            {% elif current_user.expiry_duration_seconds is none %}
+                 <p class="lead text-success">Subscription: <span class="badge bg-success-light text-success-emphasis">Indefinite <i class="fas fa-infinity"></i></span></p>
+            {% endif %}
+        {% endif %}
+    </div>
+
+    <!-- #################################################################### -->
+    <!-- # START MODIFIED SECTION: All-Time Correct Predictions (with links)  # -->
+    <!-- #################################################################### -->
+    <h4 class="mb-3 mt-4" style="font-weight: 500; color: var(--kp-primary-dark);"><i class="fas fa-medal me-2"></i>All-Time Correct Predictions</h4>
+    <div class="win-stats-grid">
+        <a href="{{ url_for('wins_history', prediction_type='hourly') }}" class="text-decoration-none">
+            <div class="win-stat-box hourly"><i class="fas fa-clock icon"></i><span class="count">{{ all_time_wins_info.get('hourly_wins', 0) }}</span><span class="label">Hourly Hits</span></div>
+        </a>
+        <a href="{{ url_for('wins_history', prediction_type='50x_hourly') }}" class="text-decoration-none">
+            <div class="win-stat-box h-50x"><i class="fas fa-bolt icon"></i><span class="count">{{ all_time_wins_info.get('50x_hourly_wins', 0) }}</span><span class="label">50x+ Hourly</span></div>
+        </a>
+        <a href="{{ url_for('wins_history', prediction_type='50x_daily') }}" class="text-decoration-none">
+            <div class="win-stat-box d-50x"><i class="fas fa-calendar-day icon"></i><span class="count">{{ all_time_wins_info.get('50x_daily_wins', 0) }}</span><span class="label">50x+ Daily</span></div>
+        </a>
+        <a href="{{ url_for('wins_history', prediction_type='100x') }}" class="text-decoration-none">
+            <div class="win-stat-box d-100x"><i class="fas fa-rocket icon"></i><span class="count">{{ all_time_wins_info.get('100x_wins', 0) }}</span><span class="label">100x+ Daily</span></div>
+        </a>
+        <a href="{{ url_for('wins_history', prediction_type='500x') }}" class="text-decoration-none">
+            <div class="win-stat-box d-500x"><i class="fas fa-meteor icon"></i><span class="count">{{ all_time_wins_info.get('500x_wins', 0) }}</span><span class="label">500x+ Daily</span></div>
+        </a>
+        <a href="{{ url_for('wins_history', prediction_type='1000x') }}" class="text-decoration-none">
+            <div class="win-stat-box d-1000x"><i class="fas fa-star icon"></i><span class="count">{{ all_time_wins_info.get('1000x_wins', 0) }}</span><span class="label">1000x+ Daily</span></div>
+        </a>
+        <a href="{{ url_for('wins_history', prediction_type='hml') }}" class="text-decoration-none">
+            <div class="win-stat-box hml"><i class="fas fa-bullseye icon"></i><span class="count">{{ all_time_wins_info.get('hml_wins', 0) }}</span><span class="label">HML Hits</span></div>
+        </a>
+        {% if all_time_wins_info.get('monthly_wins', 0) > 0 or monthly_predictions %}
+        <a href="{{ url_for('wins_history', prediction_type='monthly') }}" class="text-decoration-none">
+            <div class="win-stat-box monthly"><i class="fas fa-gem icon"></i><span class="count">{{ all_time_wins_info.get('monthly_wins', 0) }}</span><span class="label">Monthly Hits</span></div>
+        </a>
+        {% endif %}
+    </div>
+    <!-- #################################################################### -->
+    <!-- # END MODIFIED SECTION                                               # -->
+    <!-- #################################################################### -->
+
+    <div class="card hml-card mb-4">
+        <div class="card-header">
+            <i class="fas fa-bullseye me-2"></i>Upcoming High Multiplier Event Likelihoods (≥ {{ HML_THRESHOLD }}x)
+        </div>
+        <div class="card-body py-3">
+            <div class="row align-items-center">
+                <div class="col-lg-3 text-center mb-3 mb-lg-0">
+                    <button class="btn hml-luck-btn w-100"><i class="fas fa-dice-d20 me-2"></i>Try Your Luck</button>
+                </div>
+                <div class="col-lg-9">
+                    <div class="row">
+                        {% if upcoming_high_event_predictions and upcoming_high_event_predictions|length > 0 %}
+                            {% for pred_info in upcoming_high_event_predictions %}
+                            <div class="col-md-4 mb-3 mb-md-0">
+                                <div class="hml-prediction-item">
+                                    <div> 
+                                        <small class="text-muted">Expected</small>
+                                        <div class="expected-value {{ 'bg-highlight' if pred_info.expected_value_multiplier else '' }}">{{ "%.2fx"|format(pred_info.expected_value_multiplier) if pred_info.expected_value_multiplier else "---" }}</div>
+                                        <div class="likelihood">{{ pred_info.likelihood_percentage }}%</div>
+                                        <div class="event-time"><i class="far fa-calendar-alt me-1"></i>{{ pred_info.predicted_event_time_utc.strftime('%H:%M') }} UTC</div>
+                                    </div>
+                                    <div class="feedback-buttons">
+                                        <form method="POST" action="{{ url_for('submit_feedback', prediction_type='high_multiplier_log', prediction_id=pred_info.id) }}" class="d-inline">
+                                            {{ feedback_form.hidden_tag() }}
+                                            <button type="submit" class="btn btn-sm {{ 'btn-success btn-kp-feedback-yes' if pred_info.user_verdict == 1 else 'btn-outline-secondary btn-kp-feedback' }}"
+                                                    title="Mark as Correct" {{ 'disabled' if pred_info.user_verdict == 1 }}>
+                                                <i class="fas fa-thumbs-up"></i> <span class="d-none d-sm-inline">{{ 'Correct!' if pred_info.user_verdict == 1 else 'Hit?'}}</span>
+                                            </button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <div class="col-12 text-center py-4">
+                                <p class="text-muted mb-0"><em>Calculating next high likelihood events... Check back soon!</em></p>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div> 
+        {% if last_high_event_pred_update %}
+        <div class="card-footer text-center py-2">
+            <small class="text-muted">Likelihoods last generated: {{ last_high_event_pred_update.strftime('%Y-%m-%d %H:%M:%S UTC') }}</small>
+        </div>
+        {% endif %}
+    </div> 
+    
+    <!-- DEBUGGING SECTION FOR MONTHLY PREDICTIONS (Commented out) -->
+    <!--
+    <div class="debug-box"> ... </div>
+    -->
+    
+    {% if monthly_predictions and monthly_predictions|length > 0 %}
+    <div class="row justify-content-center monthly-card-wrapper"> 
+    {% for pred_monthly_item in monthly_predictions %}
+        <div class="col-lg-6 mb-4 d-flex"> 
+            <div class="monthly-card w-100"> 
+                <div> 
+                    <h4>
+                        <i class="fas fa-gem me-2"></i>
+                        Potential Major Event #{{ loop.index }} 
+                        (≥ {{ MONTHLY_5000X_MIN_MULTIPLIER }}x)
+                    </h4>
+                    {% set time_left = pred_monthly_item.time_to_event %}
+                    <div class="countdown" id="monthlyCountdownDisplay{{ loop.index }}" data-target-datetime="{{ pred_monthly_item.predicted_value_utc.isoformat() if pred_monthly_item.predicted_value_utc else (datetime.combine(pred_monthly_item.target_date_utc, datetime.min.time(), tzinfo=timezone.utc)).isoformat() }}">
+                        {% if time_left and time_left.total_seconds() > 0 %}
+                            Loading countdown...
+                        {% elif time_left and time_left.total_seconds() <= 0 %}
+                            TARGET TIME PASSED
+                        {% else %}
+                            Date: {{ pred_monthly_item.target_date_utc.strftime('%B %d, %Y') }}
+                        {% endif %}
+                    </div>
+                    <p class="target-info">Expected around: 
+                        <strong>
+                        {% if pred_monthly_item.predicted_value_utc %}
+                            {{ pred_monthly_item.predicted_value_utc.strftime('%B %d, %Y at %H:%M UTC') }}
+                        {% else %}
+                            {{ pred_monthly_item.target_date_utc.strftime('%B %d, %Y') }} (UTC)
+                        {% endif %}
+                        </strong>
+                    </p>
+                </div>
+                <div class="notes-section"> 
+                    <p>Min Multiplier: <strong>{{ "%.0fx"|format(pred_monthly_item.min_multiplier) }}</strong></p>
+                    <p>Confidence: <span class="badge bg-light text-dark">{{ pred_monthly_item.confidence_level | upper if pred_monthly_item.confidence_level else "N/A" }}</span></p>
+                    <p><em>{{ pred_monthly_item.notes if pred_monthly_item.notes else "General long-term forecast."}}</em></p>
+                </div>
+                <div class="feedback-buttons mt-3">
+                    <form method="POST" action="{{ url_for('submit_feedback', prediction_type='monthly', prediction_id=pred_monthly_item.id) }}" class="d-inline">
+                        {{ feedback_form.hidden_tag() }}
+                        <button type="submit" class="btn btn-sm {{ 'btn-light btn-kp-feedback-yes' if pred_monthly_item.user_verdict == 1 else 'btn-outline-light btn-kp-feedback' }}"
+                                title="Mark as Correct" {{ 'disabled' if pred_monthly_item.user_verdict == 1 }}>
+                            <i class="fas fa-thumbs-up"></i> <span class="d-none d-sm-inline">{{ 'Correct!' if pred_monthly_item.user_verdict == 1 else 'Hit?'}}</span>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    {% endfor %}
+    </div>
+    {% else %}
+    <div class="alert alert-light text-center" role="alert" style="background-color: var(--kp-card-bg); border-left: 5px solid var(--kp-accent);">
+      <i class="fas fa-info-circle me-2 text-muted"></i>No major monthly event predictions currently available.
+    </div>
+    {% endif %} 
+
+    <div class="accordion accordion-kp" id="predictionsAccordion">
+        <div class="accordion-item">
+            <h2 class="accordion-header" id="headingHourly"><button class="accordion-button bg-kp-hourly" type="button" data-bs-toggle="collapse" data-bs-target="#collapseHourly" aria-expanded="true" aria-controls="collapseHourly"><i class="fas fa-hourglass-half me-2"></i> Hourly Predictions (≥ {{ HOURLY_MIN_MULTIPLIER }}x)</button></h2>
+            <div id="collapseHourly" class="accordion-collapse collapse show" aria-labelledby="headingHourly" data-bs-parent="#predictionsAccordion"><div class="accordion-body">{{ render_prediction_table(predictions_hourly, 'hourly', feedback_form) }}</div></div>
+        </div>
+        <div class="accordion-item">
+            <h2 class="accordion-header" id="heading50xHourly"><button class="accordion-button collapsed bg-kp-50x-hourly" type="button" data-bs-toggle="collapse" data-bs-target="#collapse50xHourly" aria-expanded="false" aria-controls="collapse50xHourly"><i class="fas fa-bolt me-2"></i> 50x+ Hourly (≥ {{ HOURLY_50X_MIN_MULTIPLIER }}x)</button></h2>
+            <div id="collapse50xHourly" class="accordion-collapse collapse" aria-labelledby="heading50xHourly" data-bs-parent="#predictionsAccordion"><div class="accordion-body">{{ render_prediction_table(predictions_50x_hourly, '50x_hourly', feedback_form) }}</div></div>
+        </div>
+        <div class="accordion-item">
+            <h2 class="accordion-header" id="heading50xDaily"><button class="accordion-button collapsed bg-kp-50x-daily" type="button" data-bs-toggle="collapse" data-bs-target="#collapse50xDaily" aria-expanded="false" aria-controls="collapse50xDaily"><i class="fas fa-calendar-day me-2"></i> 50x+ Daily (≥ {{ DAILY_50X_MIN_MULTIPLIER }}x)</button></h2>
+            <div id="collapse50xDaily" class="accordion-collapse collapse" aria-labelledby="heading50xDaily" data-bs-parent="#predictionsAccordion"><div class="accordion-body">{{ render_prediction_table(predictions_50x_daily, '50x_daily', feedback_form) }}</div></div>
+        </div>
+        <div class="accordion-item">
+            <h2 class="accordion-header" id="heading100x"><button class="accordion-button collapsed bg-kp-100x" type="button" data-bs-toggle="collapse" data-bs-target="#collapse100x" aria-expanded="false" aria-controls="collapse100x"><i class="fas fa-rocket me-2"></i> 100x+ Daily (≥ {{ DAILY_100X_MIN_MULTIPLIER }}x)</button></h2>
+            <div id="collapse100x" class="accordion-collapse collapse" aria-labelledby="heading100x" data-bs-parent="#predictionsAccordion"><div class="accordion-body">{{ render_prediction_table(predictions_100x, '100x', feedback_form) }}</div></div>
+        </div>
+        <div class="accordion-item">
+            <h2 class="accordion-header" id="heading500x"><button class="accordion-button collapsed bg-kp-500x" type="button" data-bs-toggle="collapse" data-bs-target="#collapse500x" aria-expanded="false" aria-controls="collapse500x"><i class="fas fa-meteor me-2"></i> 500x+ Daily (≥ {{ DAILY_500X_MIN_MULTIPLIER }}x)</button></h2>
+            <div id="collapse500x" class="accordion-collapse collapse" aria-labelledby="heading500x" data-bs-parent="#predictionsAccordion"><div class="accordion-body">{{ render_prediction_table(predictions_500x, '500x', feedback_form) }}</div></div>
+        </div>
+        <div class="accordion-item">
+            <h2 class="accordion-header" id="heading1000x"><button class="accordion-button collapsed bg-kp-1000x" type="button" data-bs-toggle="collapse" data-bs-target="#collapse1000x" aria-expanded="false" aria-controls="collapse1000x"><i class="fas fa-star me-2"></i> 1000x+ Daily (≥ {{ DAILY_1000X_MIN_MULTIPLIER }}x)</button></h2>
+            <div id="collapse1000x" class="accordion-collapse collapse" aria-labelledby="heading1000x" data-bs-parent="#predictionsAccordion"><div class="accordion-body">{{ render_prediction_table(predictions_1000x, '1000x', feedback_form) }}</div></div>
+        </div>
+    </div>
+
+    {# --- System Legend Footer Box --- #}
+    <div class="system-legend-footer">
+        <h4><i class="fas fa-info-circle me-2"></i>System Legend</h4>
+        <div class="legend-section">
+            <p class="legend-section-title">Prediction Risk Levels:</p>
+            <div class="risk-levels-container">
+                <span class="risk-level-badge risk-low">Low Risk</span>
+                <span class="risk-level-badge risk-medium">Medium Risk</span>
+                <span class="risk-level-badge risk-high">High Risk</span>
+                <span class="risk-level-badge risk-extreme">Extreme Risk</span>
+            </div>
+        </div>
+        <hr>
+        <div class="legend-section">
+            <p class="legend-section-title">Confidence Guide (Likelihood Percentage):</p>
+            <div class="confidence-guide-container">
+                <div class="confidence-item"><span class="emoji-icon">🚀</span> 90-100% – High Safety</div>
+                <div class="confidence-item"><span class="emoji-icon">🎯</span> 80-89% – Reliable</div>
+                <div class="confidence-item"><span class="emoji-icon">✅</span> 70-79% – Good Chance</div>
+                <div class="confidence-item"><span class="emoji-icon">🔄</span> 50-69% – Moderate Chance / Caution</div>
+                <div class="confidence-item"><span class="emoji-icon">✨</span> 30-49% – Volatile / Speculative</div>
+                <div class="confidence-item"><span class="emoji-icon">🤔</span> 1-29% – Low Chance / Highly Speculative</div>
+            </div>
+            <p class="mt-2 text-center text-muted"><small>Note: The emojis (🚀🎯✅🔄✨🤔) next to confidence percentages in prediction tables also correspond to these levels.</small></p>
+        </div>
+    </div>
+    {# --- END: System Legend Footer Box --- #}
+
+</div> {# End of main container #}
+{% endblock %} {# End of content block #}
+
+{% block extra_js %}
+<script>
+    // Hourly page refresh
+    let lastHour = new Date().getHours();
+    function checkAndRefresh() {
+        const currentHour = new Date().getHours();
+        if (currentHour !== lastHour) {
+            console.log("New hour, reloading page for fresh predictions.");
+            window.location.reload();
+        }
+    }
+    setInterval(checkAndRefresh, 60 * 1000);
+
+    // Expiry countdown timer
+    function updateExpiryCountdown() {
+        const countdownElement = document.getElementById('expiryCountdown');
+        if (!countdownElement) return;
+        let currentText = countdownElement.textContent;
+        if (currentText.toLowerCase().includes("expired") || currentText.toLowerCase().includes("indefinite") || currentText.toLowerCase().includes("timer not started") || currentText.toLowerCase().includes("n/a")) {
+            return; 
+        }
+        try {
+            let parts = currentText.split(':').map(Number);
+            if (parts.length !== 3 || parts.some(isNaN)) return; 
+            let totalSeconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+            if (totalSeconds <= 0) {
+                countdownElement.textContent = "Expired";
+                countdownElement.classList.remove('text-success');
+                countdownElement.classList.add('text-danger');
+                return;
+            }
+            totalSeconds--;
+            let hours = Math.floor(totalSeconds / 3600);
+            let minutes = Math.floor((totalSeconds % 3600) / 60);
+            let seconds = totalSeconds % 60;
+            countdownElement.textContent = String(hours).padStart(2, '0') + ":" + String(minutes).padStart(2, '0') + ":" + String(seconds).padStart(2, '0');
+        } catch (e) { console.error("Error parsing expiry countdown:", e); }
+    }
+    {% if current_user.is_authenticated and current_user.status == 'active' and current_user.time_left_seconds and current_user.time_left_seconds > 0 %}
+        setInterval(updateExpiryCountdown, 1000);
+    {% endif %}
+
+    // Monthly countdown timers & Accordion state
+    document.addEventListener('DOMContentLoaded', function() {
+        document.querySelectorAll('[id^="monthlyCountdownDisplay"]').forEach(countdownElement => {
+            if (countdownElement.dataset.targetDatetime) {
+                const targetDateTime = new Date(countdownElement.dataset.targetDatetime);
+                let intervalId;
+                function doMonthlyCountdown() {
+                    const now = new Date();
+                    const remainingMillis = targetDateTime - now;
+                    if (remainingMillis <= 0) {
+                        countdownElement.textContent = "TARGET TIME PASSED";
+                        countdownElement.classList.add("text-warning");
+                        if (intervalId) clearInterval(intervalId);
+                        return;
+                    }
+                    const rS = Math.floor(remainingMillis / 1000); 
+                    let d = Math.floor(rS / (3600*24));
+                    let h = Math.floor((rS % (3600*24)) / 3600);
+                    let m = Math.floor((rS % 3600) / 60);
+                    let s = Math.floor(rS % 60);
+                    let disp = "";
+                    if (d > 0) disp += d + "d ";
+                    disp += String(h).padStart(2, '0') + "h " + String(m).padStart(2, '0') + "m " + String(s).padStart(2, '0') + "s";
+                    countdownElement.textContent = disp;
+                }
+                if (targetDateTime > new Date()) { doMonthlyCountdown(); intervalId = setInterval(doMonthlyCountdown, 1000); }
+                else { countdownElement.textContent = "TARGET TIME PASSED"; countdownElement.classList.add("text-warning");}
+            }
+        });
+
+        var hash = window.location.hash;
+        if (hash) {
+            var targetId = hash.substring(1); 
+            var targetCollapseElement = document.getElementById(targetId);
+            if (targetCollapseElement && targetCollapseElement.classList.contains('accordion-collapse')) {
+                var accordionParent = targetCollapseElement.closest('.accordion');
+                if (accordionParent) {
+                    var currentlyOpen = accordionParent.querySelector('.accordion-collapse.show');
+                    if (currentlyOpen && currentlyOpen !== targetCollapseElement) {
+                        new bootstrap.Collapse(currentlyOpen, { toggle: false }).hide();
+                    }
+                }
+                new bootstrap.Collapse(targetCollapseElement, { toggle: false }).show();
+            }
+        }
+        const accordion = document.getElementById('predictionsAccordion');
+        if (accordion) {
+            const collapses = accordion.querySelectorAll('.accordion-collapse');
+            collapses.forEach(collapseEl => {
+                if (sessionStorage.getItem(collapseEl.id) === 'true') { new bootstrap.Collapse(collapseEl, {toggle: false}).show(); }
+                else if (sessionStorage.getItem(collapseEl.id) === 'false') { new bootstrap.Collapse(collapseEl, {toggle: false}).hide(); }
+                collapseEl.addEventListener('shown.bs.collapse', function () { sessionStorage.setItem(this.id, 'true'); });
+                collapseEl.addEventListener('hidden.bs.collapse', function () { sessionStorage.setItem(this.id, 'false'); });
+            });
+        }
+    });
+</script>
+{% endblock %}
