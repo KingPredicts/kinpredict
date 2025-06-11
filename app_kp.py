@@ -764,13 +764,9 @@ def predict_hourly_custom():
     logger.info(f"{prediction_label_log_prefix}: PREDICTION CYCLE END")
 
 def predict_50x_hourly_custom():
-    global HOURLY_50X_MODEL_PIPELINE
     pred_cls = Prediction50xHourly
     pred_count_target = HOURLY_50X_PRED_COUNT
     min_multiplier_for_preds = HOURLY_50X_MIN_MULTIPLIER
-    model_key_for_success_check = "hourly_50x"
-    model_pipeline_global_name = "HOURLY_50X_MODEL_PIPELINE"
-    ml_features_list = HOURLY_50X_ML_FEATURES
     prediction_label_log_prefix = "50x Hourly"
 
     logger.info(f"{prediction_label_log_prefix}: PREDICTION CYCLE START (Target: {pred_count_target})")
@@ -778,144 +774,89 @@ def predict_50x_hourly_custom():
     target_hour_start_utc = now_utc.replace(minute=0, second=0, microsecond=0)
     target_hour_end_utc = target_hour_start_utc + timedelta(hours=1)
 
-    raw_existing_preds_this_hour = pred_cls.query.filter(
-        pred_cls.predicted_datetime_utc >= target_hour_start_utc,
-        pred_cls.predicted_datetime_utc < target_hour_end_utc
-    ).all()
-    existing_preds_for_this_hour_objects = []
-    for p_db in raw_existing_preds_this_hour:
-        if p_db.predicted_datetime_utc.tzinfo is None:
-            p_db.predicted_datetime_utc = p_db.predicted_datetime_utc.replace(tzinfo=timezone.utc)
-        existing_preds_for_this_hour_objects.append(p_db)
-    existing_preds_count_this_hour = len(existing_preds_for_this_hour_objects)
-    
-    is_scheduled_run = now_utc.minute == 0
-
-    if is_scheduled_run:
-        logger.info(f"{prediction_label_log_prefix}: Scheduled run for {target_hour_start_utc.strftime('%H:%M')}. Clearing existing for this hour.")
-        if existing_preds_count_this_hour > 0:
-            try:
-                num_deleted = pred_cls.query.filter(
-                    pred_cls.predicted_datetime_utc >= target_hour_start_utc,
-                    pred_cls.predicted_datetime_utc < target_hour_end_utc
-                ).delete(synchronize_session=False)
-                db.session.commit()
-                if num_deleted > 0: logger.info(f"  Cleared {num_deleted} old predictions.")
-                existing_preds_count_this_hour = 0 
-                existing_preds_for_this_hour_objects = [] 
-            except Exception as e:
-                db.session.rollback(); logger.error(f"{prediction_label_log_prefix}: Error clearing: {e}", exc_info=True)
-    
-    if not is_scheduled_run and existing_preds_count_this_hour >= pred_count_target:
-        logger.info(f"{prediction_label_log_prefix}: Found {existing_preds_count_this_hour} existing (>= target {pred_count_target}). Skipping.")
-        return
-
-    logger.info(f"{prediction_label_log_prefix}: Proceeding. Current existing for this hour: {existing_preds_count_this_hour}. Target: {pred_count_target}.")
-    
-    generated_predictions_this_run: List[Any] = list(existing_preds_for_this_hour_objects)
-    current_run_hhmm_slots: Set[str] = {p.predicted_datetime_utc.strftime('%H:%M') for p in existing_preds_for_this_hour_objects}
-
+    # --- FIX: ALWAYS CLEAR PREDICTIONS FOR THE UPCOMING HOUR ---
+    try:
+        num_deleted = pred_cls.query.filter(
+            pred_cls.predicted_datetime_utc >= target_hour_start_utc,
+            pred_cls.predicted_datetime_utc < target_hour_end_utc
+        ).delete(synchronize_session=False)
+        db.session.commit()
+        if num_deleted > 0:
+            logger.info(f"Cleared {num_deleted} old {prediction_label_log_prefix} predictions for the upcoming hour.")
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error clearing old {prediction_label_log_prefix} predictions: {e}")
+        
+    generated_predictions = []
+    current_hhmm_slots = set()
     df_all_hist = get_historical_data_df(sort_ascending=True, limit=200)
-    model_pipeline = globals().get(model_pipeline_global_name)
-    newly_made_ml_preds_count_this_run = 0
 
-    if MODELS_LOADED_SUCCESSFULLY.get(model_key_for_success_check) and model_pipeline and \
-       not (df_all_hist.empty or df_all_hist[HOURLY_ML_TARGET].dropna().count() < 5):
-        
-        logger.info(f"{prediction_label_log_prefix}: Attempting ML predictions for hour {target_hour_start_utc.strftime('%H:%M')}.")
+    if MODELS_LOADED_SUCCESSFULLY["hourly_50x"] and HOURLY_50X_MODEL_PIPELINE and not df_all_hist.empty:
+        logger.info(f"{prediction_label_log_prefix}: Attempting ML-based generation.")
         last_actual_event = df_all_hist.iloc[-1].copy()
-        if pd.isna(last_actual_event[HOURLY_ML_TARGET]) or last_actual_event[HOURLY_ML_TARGET] <= 0:
-            median_interval = df_all_hist[HOURLY_ML_TARGET].dropna().median()
-            last_actual_event[HOURLY_ML_TARGET] = median_interval if pd.notna(median_interval) and median_interval > 0 else 300.0
-        
         current_time_base = last_actual_event['timestamp']
         current_event_for_features = last_actual_event.copy()
-        if current_time_base.tzinfo is None: current_time_base = current_time_base.replace(tzinfo=timezone.utc)
 
-        if current_time_base >= target_hour_end_utc or current_time_base < target_hour_start_utc - timedelta(minutes=30) :
-            logger.info(f"  ML Base {current_time_base.strftime('%H:%M')} is unsuitable. Adjusting to just before target hour {target_hour_start_utc.strftime('%H:%M')}.")
-            current_time_base = target_hour_start_utc - timedelta(minutes=np.random.randint(5,15))
-            current_event_for_features['timestamp'] = current_time_base
-        
-        logger.info(f"  ML Initial base for loop: {current_time_base.strftime('%Y-%m-%d %H:%M')}")
-
-        for i in range(pred_count_target * 7): 
-            if len(generated_predictions_this_run) >= pred_count_target: break 
-            if current_time_base >= target_hour_end_utc: break
-
-            logger.debug(f"  {prediction_label_log_prefix} ML Iter {i+1}: Base={current_time_base.strftime('%H:%M')}, TotalGened={len(generated_predictions_this_run)}")
-            features_df = prepare_features_for_hourly_prediction(df_all_hist, current_event_for_features, ml_features_list, HOURLY_ML_TARGET)
+        # Generate predictions using the ML model in a loop
+        for _ in range(pred_count_target * 5):  # Try enough times to fill the hour
+            if len(generated_predictions) >= pred_count_target:
+                break
             
-            if features_df is None or features_df.empty:
-                logger.debug(f"    Iter {i+1}: Feature prep failed. Nudging base.")
-                current_time_base += timedelta(minutes=1); current_event_for_features['timestamp'] = current_time_base; current_event_for_features[HOURLY_ML_TARGET] = 60; continue
+            features_df = prepare_features_for_hourly_prediction(df_all_hist, current_event_for_features, HOURLY_50X_ML_FEATURES, HOURLY_ML_TARGET)
+            if features_df is None:
+                logger.warning("Feature preparation failed for 50x hourly, stopping ML generation.")
+                break
             
             try:
-                pred_interval_raw = model_pipeline.predict(features_df)[0]
-                interval_cap = 20 * 60
-                final_interval = int(round(max(60.0, min(pred_interval_raw, interval_cap)) / 60.0) * 60.0)
-                if final_interval <= 0: final_interval = np.random.randint(1, 4) * 60
-                logger.debug(f"    Iter {i+1}: PredRaw={pred_interval_raw:.0f}s, FinalInt={final_interval}s")
+                pred_interval = int(HOURLY_50X_MODEL_PIPELINE.predict(features_df)[0])
+                # Cap the interval to ensure we can fit enough predictions in one hour
+                pred_interval = max(60, min(pred_interval, 20 * 60))
             except Exception as e:
-                logger.error(f"    Iter {i+1}: ML Error: {e}", exc_info=False); final_interval = np.random.randint(2, 5) * 60
-                current_time_base += timedelta(minutes=1); current_event_for_features['timestamp'] = current_time_base; current_event_for_features[HOURLY_ML_TARGET] = 60; continue
-            
-            next_pred_time = (current_time_base + timedelta(seconds=final_interval)).replace(second=0, microsecond=0)
-            logger.debug(f"    Iter {i+1}: NextCandTime={next_pred_time.strftime('%H:%M')}")
+                logger.error(f"50x Hourly ML prediction error: {e}. Using random interval.")
+                pred_interval = random.randint(4, 12) * 60
 
-            if next_pred_time < target_hour_start_utc or \
-               next_pred_time < now_utc.replace(second=0, microsecond=0) - timedelta(minutes=2):
-                logger.debug(f"    Skipping {next_pred_time.strftime('%H:%M')} (too early/past). Advancing base.")
-                current_time_base = next_pred_time
-                current_event_for_features = pd.Series({'timestamp': current_time_base, 'multiplier': min_multiplier_for_preds, HOURLY_ML_TARGET: final_interval}, dtype=object)
-                continue
+            next_pred_time = (current_time_base + timedelta(seconds=pred_interval)).replace(second=0, microsecond=0)
 
+            # Only add the prediction if it falls within the target hour
             if target_hour_start_utc <= next_pred_time < target_hour_end_utc:
                 hhmm = next_pred_time.strftime('%H:%M')
-                if hhmm not in current_run_hhmm_slots:
-                    if next_pred_time.minute == 0:
-                        logger.info(f"    Skipping ML pred at {hhmm} (minute 00) for {prediction_label_log_prefix}.")
-                        current_time_base += timedelta(minutes=1); current_event_for_features['timestamp'] = current_time_base; current_event_for_features[HOURLY_ML_TARGET] = 60; continue
-                    
+                if hhmm not in current_hhmm_slots:
                     avg_m = min_multiplier_for_preds * np.random.uniform(1.05, 1.5)
                     max_m = avg_m * np.random.uniform(1.1, 1.3)
-                    conf = round(0.35 + (0.18 * 1.0), 2); conf = min(conf, 0.60)
+                    conf = round(np.random.uniform(0.35, 0.60), 2)
                     
-                    generated_predictions_this_run.append(pred_cls(predicted_datetime_utc=next_pred_time,min_multiplier=min_multiplier_for_preds, avg_multiplier=round(avg_m,2),max_multiplier=round(max_m,2), confidence=conf))
-                    current_run_hhmm_slots.add(hhmm)
-                    logger.info(f"    Added {prediction_label_log_prefix} ML pred: {hhmm} (Conf: {conf*100:.0f}%)")
-                    current_time_base = next_pred_time
-                    current_event_for_features = pd.Series({'timestamp': current_time_base, 'multiplier': avg_m, HOURLY_ML_TARGET: final_interval}, dtype=object)
-                    newly_made_ml_preds_count_this_run +=1
-                else: 
-                    logger.debug(f"    Slot {hhmm} taken. Nudging base.")
-                    current_time_base += timedelta(minutes=1); current_event_for_features['timestamp'] = current_time_base; current_event_for_features[HOURLY_ML_TARGET] = 60
-            elif next_pred_time >= target_hour_end_utc: 
-                logger.info(f"    PredTime {next_pred_time.strftime('%H:%M')} is beyond target hour {target_hour_end_utc.strftime('%H:%M')}. Breaking ML loop.")
-                break 
-        
-        logger.info(f"{prediction_label_log_prefix}: ML loop finished. Newly made this run: {newly_made_ml_preds_count_this_run}. Total for hour: {len(generated_predictions_this_run)}.")
-    else:
-        logger.warning(f"{prediction_label_log_prefix}: Conditions for ML not met. Current existing for hour: {existing_preds_count_this_hour}")
+                    generated_predictions.append(pred_cls(
+                        predicted_datetime_utc=next_pred_time, 
+                        min_multiplier=min_multiplier_for_preds, 
+                        avg_multiplier=round(avg_m, 2), 
+                        max_multiplier=round(max_m, 2), 
+                        confidence=conf
+                    ))
+                    current_hhmm_slots.add(hhmm)
+            
+            # Update the base for the next prediction in the chain
+            current_time_base = next_pred_time
+            current_event_for_features = pd.Series({
+                'timestamp': current_time_base, 
+                'multiplier': locals().get('avg_m', min_multiplier_for_preds), 
+                HOURLY_ML_TARGET: pred_interval
+            }, dtype=object)
 
-    if len(generated_predictions_this_run) < pred_count_target:
-        num_placeholders_needed = pred_count_target - len(generated_predictions_this_run)
-        logger.info(f"  {prediction_label_log_prefix}: ML generated {len(generated_predictions_this_run)} preds. Adding {num_placeholders_needed} placeholders to reach target {pred_count_target}.")
-        
-        additional_placeholders = _generate_placeholder_predictions(
-            pred_cls=pred_cls, 
-            num_preds=num_placeholders_needed, 
-            target_start_dt=target_hour_start_utc, 
-            target_end_dt=target_hour_end_utc,
-            min_mult=min_multiplier_for_preds, 
-            existing_hhmm_slots=current_run_hhmm_slots,
-            reason=f"Fill after {prediction_label_log_prefix} ML to reach target", 
-            force_low_confidence=True
-        )
-        
-        generated_predictions_this_run.extend(additional_placeholders)
+    # After the ML loop, fill any remaining slots with placeholders
+    num_placeholders_needed = pred_count_target - len(generated_predictions)
+    if num_placeholders_needed > 0:
+        logger.info(f"{prediction_label_log_prefix}: ML generated {len(generated_predictions)}. Adding {num_placeholders_needed} placeholders.")
+        generated_predictions.extend(_generate_placeholder_predictions(
+            pred_cls, 
+            num_placeholders_needed, 
+            target_hour_start_utc, 
+            target_hour_end_utc, 
+            min_multiplier_for_preds, 
+            current_hhmm_slots, 
+            "Fill after 50x ML"
+        ))
     
-    _finalize_and_save_predictions(pred_cls, generated_predictions_this_run, pred_count_target, f"{prediction_label_log_prefix} (ML/Fallback)")
+    _finalize_and_save_predictions(pred_cls, generated_predictions, pred_count_target, "50x+ Hourly (ML/Fallback)")
     logger.info(f"{prediction_label_log_prefix}: PREDICTION CYCLE END")
 
 def predict_50x_daily():
