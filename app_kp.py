@@ -141,7 +141,7 @@ bcrypt = Bcrypt(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 login_manager.login_message_category = 'info'
-scheduler = BackgroundScheduler(daemon=True, timezone=str(timezone.utc))
+
 
 # --- SECTION: HELPER FUNCTIONS ---
 def parse_expiry_time(expiry_str: str) -> Optional[int]:
