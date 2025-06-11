@@ -1611,6 +1611,46 @@ def job_cleanup_old_data():
         else: logger.info("Cleanup: Finished. No old records found to delete.")
 # --- END SECTION: SCHEDULER JOBS ---
 
+# --- ADD THIS NEW SECRET ROUTE ---
+
+# IMPORTANT: Generate a new, long, random secret key for this URL.
+# You can use a password generator for this.
+# This key should be set as an environment variable in Render.
+CRON_SECRET_KEY = os.getenv('CRON_SECRET_KEY', 'default_secret_for_local_dev_only')
+
+@app.route(f'/run-jobs/{CRON_SECRET_KEY}/<string:job_type>')
+def run_scheduled_jobs_route(job_type):
+    """
+    This is a secret webhook URL for an external scheduler to call.
+    It runs prediction jobs based on the 'job_type' parameter.
+    """
+    # Define which functions belong to which job type
+    job_map = {
+        'hourly': [predict_hourly_custom, predict_50x_hourly_custom, predict_high_multiplier_likelihood],
+        'daily': [predict_50x_daily, predict_100x_custom, predict_500x_custom, predict_1000x_custom],
+        'monthly': [predict_monthly_5000x_custom],
+        'cleanup': [job_cleanup_old_data]
+    }
+
+    if job_type not in job_map:
+        logger.warning(f"Cron job called with invalid job_type: {job_type}")
+        return "Invalid job type", 400
+
+    logger.info(f"Cron job triggered for type: {job_type}")
+    
+    # Run the functions associated with the job type
+    for job_func in job_map[job_type]:
+        try:
+            job_func()
+        except Exception as e:
+            logger.error(f"Error running job {job_func.__name__} for type {job_type}: {e}", exc_info=True)
+            # Still continue to the next job even if one fails
+            pass
+            
+    return f"Successfully executed {job_type} jobs.", 200
+
+# --- END OF NEW SECRET ROUTE ---
+
 # --- SECTION: FLASK ROUTES ---
 @app.route('/')
 def landing_page(): return render_template('landing.html', title="KingPredict - Welcome")
