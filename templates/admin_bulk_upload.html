@@ -1,0 +1,67 @@
+<!-- templates/admin_bulk_upload.html -->
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+
+            <div class="card shadow-sm">
+                <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0"><i class="fas fa-file-upload me-2"></i>Bulk Upload Historical Data</h4>
+                    <a href="{{ url_for('admin_dashboard') }}" class="btn btn-sm btn-outline-light">
+                        <i class="fas fa-arrow-left me-1"></i> Back to Admin Panel
+                    </a>
+                </div>
+                <div class="card-body p-4">
+
+                    <!-- Instructions and Formatting Guide -->
+                    <div class="alert alert-info" role="alert">
+                        <h5 class="alert-heading"><i class="fas fa-info-circle me-2"></i>Instructions</h5>
+                        <p>This page allows you to upload a large amount of historical data at once using a CSV (Comma-Separated Values) file.</p>
+                        <hr>
+                        <p class="mb-1"><strong>CSV File Format Requirements:</strong></p>
+                        <ul>
+                            <li>The file must be a standard `.csv` file.</li>
+                            <li>The very first row **must be a header row** with these exact column names in this order: <code>date,time,multiplier</code></li>
+                            <li>The `date` column must be in <code>YYYY-MM-DD</code> format (e.g., 2025-06-12).</li>
+                            <li>The `time` column must be in <code>HH:MM:SS</code> format (e.g., 14:35:01).</li>
+                            <li>The `multiplier` column must be a number (e.g., 25.43).</li>
+                        </ul>
+                        <p>Any rows with incorrect formatting will be skipped, and an error message will be shown.</p>
+                    </div>
+
+                    <!-- Example CSV Content -->
+                    <div class="mb-4">
+                        <h6>Example CSV Content:</h6>
+                        <pre class="bg-light p-3 rounded" style="font-size: 0.9em;"><code>date,time,multiplier
+2025-06-11,22:15:03,15.86
+2025-06-11,22:10:33,10.00
+2025-06-11,22:05:12,24.22</code></pre>
+                    </div>
+
+                    <!-- File Upload Form -->
+                    <form method="POST" enctype="multipart/form-data" novalidate>
+                        {{ form.hidden_tag() }}
+                        <div class="mb-3">
+                            {{ form.csv_file.label(class="form-label") }}
+                            {{ form.csv_file(class="form-control") }}
+                            {% if form.csv_file.errors %}
+                                <div class="invalid-feedback d-block">
+                                    {% for error in form.csv_file.errors %}
+                                        <span>{{ error }}</span>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+                        <div class="d-grid">
+                            {{ form.submit(class="btn btn-primary btn-lg") }}
+                        </div>
+                    </form>
+
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock content %}
