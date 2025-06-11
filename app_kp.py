@@ -973,11 +973,8 @@ def predict_50x_hourly_custom():
     _finalize_and_save_predictions(pred_cls, generated_predictions_this_run, pred_count_target, f"{prediction_label_log_prefix} (ML/Fallback)")
     logger.info(f"{prediction_label_log_prefix}: PREDICTION CYCLE END")
 
-def predict_50x_daily_custom():
-    """
-    Generates 20 daily 50x predictions spread randomly and uniquely across the entire day.
-    This method ensures no duplicate time slots and covers the range from 00:01 to 23:59.
-    """
+def predict_50x_daily():
+    """Generates 20 daily 50x predictions spread randomly and uniquely across the entire day."""
     logger.info("50X DAILY PREDICTION (Full Day Unique Shuffle) CYCLE START")
     pred_cls = Prediction50xDaily
     pred_count_target = DAILY_50X_PRED_COUNT
@@ -986,56 +983,41 @@ def predict_50x_daily_custom():
 
     now_utc = datetime.now(timezone.utc)
     target_day_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    target_day_end = target_day_start + timedelta(days=1)
+
+    # Clear old predictions for this tier for the target day
+    try:
+        pred_cls.query.filter(
+            pred_cls.predicted_datetime_utc >= target_day_start,
+            pred_cls.predicted_datetime_utc < target_day_end
+        ).delete(synchronize_session=False)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error clearing old {prediction_label} predictions: {e}")
 
     generated_predictions: List[Any] = []
-
     total_minutes_in_day = 24 * 60
+    # Create a pool of all possible minutes from 00:01 to 23:59
     all_possible_minutes = list(range(1, total_minutes_in_day))
-
-    if pred_count_target > len(all_possible_minutes):
-        logger.error(f"Cannot generate {pred_count_target} unique predictions. Only {len(all_possible_minutes)} unique minute-slots are available. Aborting.")
-        return
-
+    
     np.random.shuffle(all_possible_minutes)
     chosen_minute_offsets = all_possible_minutes[:pred_count_target]
-    logger.info(f"Generating {len(chosen_minute_offsets)} unique predictions by shuffling all available minutes from 00:01-23:59...")
-
+    
     for minute_offset in chosen_minute_offsets:
         pred_time_utc = target_day_start + timedelta(minutes=int(minute_offset))
         avg_m = min_mult_for_preds * np.random.uniform(1.1, 2.5)
         max_m = avg_m * np.random.uniform(1.2, 1.8)
         conf = round(np.random.uniform(0.25, 0.60), 2)
-        new_pred = pred_cls(
-            predicted_datetime_utc=pred_time_utc, min_multiplier=min_mult_for_preds,
-            avg_multiplier=round(avg_m, 2), max_multiplier=round(max_m, 2), confidence=conf
-        )
-        generated_predictions.append(new_pred)
+        generated_predictions.append(pred_cls(
+            predicted_datetime_utc=pred_time_utc,
+            min_multiplier=min_mult_for_preds,
+            avg_multiplier=round(avg_m, 2),
+            max_multiplier=round(max_m, 2),
+            confidence=conf
+        ))
     
-    logger.info(f"Successfully created {len(generated_predictions)} unique, randomly-spread time slots for the day.")
-
-    if not generated_predictions:
-        logger.info(f"No {prediction_label} predictions were generated to save.")
-        return
-    final_preds_list = sorted(generated_predictions, key=lambda p: p.predicted_datetime_utc)
-    for i in range(len(final_preds_list)):
-        if i == 0:
-            final_preds_list[i].interval_to_next_seconds = None
-        else:
-            interval_sec = (final_preds_list[i].predicted_datetime_utc - final_preds_list[i-1].predicted_datetime_utc).total_seconds()
-            final_preds_list[i].interval_to_next_seconds = int(max(60, interval_sec))
-    try:
-        pred_cls.query.filter(
-            pred_cls.predicted_datetime_utc >= target_day_start,
-            pred_cls.predicted_datetime_utc < (target_day_start + timedelta(days=1))
-        ).delete(synchronize_session=False)
-        db.session.commit()
-        db.session.add_all(final_preds_list)
-        db.session.commit()
-        logger.info(f"Cleared old and saved {len(final_preds_list)} new {prediction_label} predictions.")
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error saving {prediction_label} predictions: {e}", exc_info=True)
-    
+    _finalize_and_save_predictions(pred_cls, generated_predictions, pred_count_target, prediction_label)
     logger.info("50X DAILY PREDICTION (Full Day Unique Shuffle) CYCLE END")
 
 def predict_high_multiplier_likelihood():
