@@ -26,8 +26,6 @@ joblib==1.4.2
 # WTForms is a dependency of Flask-WTF, included for clarity
 WTForms==3.1.2
 
-# --- Background Task Scheduling ---
-APScheduler==3.10.4
 
 # --- Production WSGI Server ---
 # The default Flask server is for development ONLY.
