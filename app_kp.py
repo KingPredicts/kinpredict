@@ -18,8 +18,6 @@ from flask_bcrypt import Bcrypt
 from flask_wtf import FlaskForm
 from wtforms import StringField, PasswordField, SubmitField, TextAreaField, SelectField, HiddenField
 from wtforms.validators import DataRequired, Length, EqualTo, ValidationError, Regexp # Email removed as not used directly
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
 from flask_migrate import Migrate
 import joblib 
 
